@@ -22,6 +22,9 @@ static uint16_t thermostat_endpoint_id = 0;
 static uint32_t system_mode_attribute_id = 0;
 static uint32_t occupied_heating_setpoint_id = 0;
 
+#define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
+#define SAMPLE_PERIOD        (1000)   // milliseconds
+
 typedef enum {
     SYSTEM_MODE_OFF = 0,
     SYSTEM_MODE_COOL = 3,
@@ -155,23 +158,48 @@ extern "C" void app_main()
     owb = owb_rmt_initialize(&rmt_driver_info, GPIO_NUM_4);
     owb_use_crc(owb, true);  // enable CRC check for ROM code
 
-    // Find all connected devices
-    ESP_LOGI(TAG, "Find devices:");
-    OneWireBus_ROMCode device_rom_codes[1] = {0};
-    int num_devices = 0;
+    OneWireBus_ROMCode device_rom_code;
     OneWireBus_SearchState search_state = {0};
     bool found = false;
     owb_search_first(owb, &search_state, &found);
-    while (found)
-    {
+    if (!found) {
+        ESP_LOGE(TAG, "No temperature sensor found");
+    } else {
         char rom_code_s[17];
         owb_string_from_rom_code(search_state.rom_code, rom_code_s, sizeof(rom_code_s));
-        ESP_LOGI(TAG, "  %d : %s", num_devices, rom_code_s);
-        device_rom_codes[num_devices] = search_state.rom_code;
-        ++num_devices;
-        owb_search_next(owb, &search_state, &found);
+        device_rom_code = search_state.rom_code;
+        ESP_LOGI(TAG, "Found temperature sensor: %s", rom_code_s);
     }
-    ESP_LOGI(TAG, "Found %d device%s", num_devices, num_devices == 1 ? "" : "s");
+
+    DS18B20_Info* ds18b20_info = ds18b20_malloc();
+    ds18b20_init_solo(ds18b20_info, owb);
+    ds18b20_use_crc(ds18b20_info, true);
+    ds18b20_set_resolution(ds18b20_info, DS18B20_RESOLUTION);
+
+
+    int sample_count = 0;
+    TickType_t last_wake_time = xTaskGetTickCount();
+
+    while (1) {
+        ds18b20_convert_all(owb);
+
+        // In this application all devices use the same resolution,
+        // so use the first device to determine the delay
+        ds18b20_wait_for_conversion(ds18b20_info);
+
+        // Read the results immediately after conversion otherwise it may fail
+        // (using printf before reading may take too long)
+        float reading;
+        DS18B20_ERROR error = ds18b20_read_temp(ds18b20_info, &reading);
+
+        // Print results in a separate loop, after all have been read
+        ESP_LOGI(TAG, "Temperature readings (degrees C): %.1f sample %d", reading, ++sample_count);
+        if (error != DS18B20_OK) {
+            ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
+        }
+
+        xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);
+    }
 
     // attribute_t *attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::FeatureMap::Id);
     // esp_matter_attr_val_t val = esp_matter_invalid(NULL);

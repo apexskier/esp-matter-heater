@@ -95,9 +95,9 @@ static esp_err_t app_attribute_update_cb(
     uint32_t attribute_id,
     esp_matter_attr_val_t *val,
     void *priv_data
-) {
-        ESP_LOGI(TAG, "Attribute update callback: type: %d, endpoint: %u, cluster: %lu, attribute: %lu", type, endpoint_id,
-                cluster_id, attribute_id);
+)
+{
+    ESP_LOGI(TAG, "Attribute update callback: type: %d, endpoint: %u, cluster: %lu, attribute: %lu", type, endpoint_id, cluster_id, attribute_id);
     if (type == PRE_UPDATE) {
         ESP_LOGI(TAG, "value type: %u", val->type);
         if (occupied_heating_setpoint_id && attribute_id == occupied_heating_setpoint_id) {
@@ -116,16 +116,16 @@ static esp_err_t app_attribute_update_cb(
 
 void take_temperature_reading( void *pvParameters )
 {
-    esp_err_t err = ESP_OK;
+    esp_err_t matter_err = ESP_OK;
 
     // Stable readings require a brief period before communication
     vTaskDelay(2000.0 / portTICK_PERIOD_MS);
 
     // Create a 1-Wire bus, using the RMT timeslot driver
-    OneWireBus * owb;
+    OneWireBus *owb;
     owb_rmt_driver_info rmt_driver_info;
     owb = owb_rmt_initialize(&rmt_driver_info, GPIO_NUM_4);
-    owb_use_crc(owb, true);  // enable CRC check for ROM code
+    owb_use_crc(owb, true);
 
     OneWireBus_ROMCode device_rom_code;
     OneWireBus_SearchState search_state = {0};
@@ -145,30 +145,27 @@ void take_temperature_reading( void *pvParameters )
     ds18b20_use_crc(ds18b20_info, true);
     ds18b20_set_resolution(ds18b20_info, DS18B20_RESOLUTION);
 
-    int sample_count = 0;
+    float reading;
     TickType_t last_wake_time = xTaskGetTickCount();
 
     while (true) {
         ds18b20_convert_all(owb);
-
         ds18b20_wait_for_conversion(ds18b20_info);
 
         // Read the results immediately after conversion otherwise it may fail
         // (using printf before reading may take too long)
-        float reading;
         DS18B20_ERROR error = ds18b20_read_temp(ds18b20_info, &reading);
-
-        // Print results in a separate loop, after all have been read
-        ESP_LOGI(TAG, "Temperature readings (degrees C): %.1f sample %d", reading, ++sample_count);
         if (error != DS18B20_OK) {
             ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
-        }
+        } else {
+            ESP_LOGI(TAG, "Temperature reading: %.1f°C", reading);
 
-        // set temperature attribute
-        esp_matter_attr_val_t temp_val = esp_matter_int16(reading * 100);
-        err = attribute::update(thermostat_endpoint_id, thermostat_cluster_id, local_temp_attribute_id, &temp_val);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to temperature attribute: %d", err);
+            // set temperature attribute
+            esp_matter_attr_val_t temp_val = esp_matter_int16(reading * 100);
+            matter_err = attribute::update(thermostat_endpoint_id, thermostat_cluster_id, local_temp_attribute_id, &temp_val);
+            if (matter_err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to temperature attribute: %d", matter_err);
+            }
         }
 
         xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);

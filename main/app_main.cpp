@@ -112,6 +112,68 @@ static esp_err_t app_attribute_update_cb(
     return ESP_OK;
 }
 
+void take_temperature_reading( void *pvParameters )
+{
+    // Create a 1-Wire bus, using the RMT timeslot driver
+    OneWireBus * owb;
+    owb_rmt_driver_info rmt_driver_info;
+    owb = owb_rmt_initialize(&rmt_driver_info, GPIO_NUM_4);
+    owb_use_crc(owb, true);  // enable CRC check for ROM code
+
+    OneWireBus_ROMCode device_rom_code;
+    OneWireBus_SearchState search_state = {0};
+    bool found = false;
+    owb_search_first(owb, &search_state, &found);
+    if (!found) {
+        ESP_LOGE(TAG, "No temperature sensor found");
+    } else {
+        char rom_code_s[17];
+        owb_string_from_rom_code(search_state.rom_code, rom_code_s, sizeof(rom_code_s));
+        device_rom_code = search_state.rom_code;
+        ESP_LOGI(TAG, "Found temperature sensor: %s", rom_code_s);
+    }
+
+    DS18B20_Info* ds18b20_info = ds18b20_malloc();
+    ds18b20_init_solo(ds18b20_info, owb);
+    ds18b20_use_crc(ds18b20_info, true);
+    ds18b20_set_resolution(ds18b20_info, DS18B20_RESOLUTION);
+
+    int sample_count = 0;
+    TickType_t last_wake_time = xTaskGetTickCount();
+
+
+    while (true) {
+        ds18b20_convert_all(owb);
+
+        ds18b20_wait_for_conversion(ds18b20_info);
+
+        // Read the results immediately after conversion otherwise it may fail
+        // (using printf before reading may take too long)
+        float reading;
+        DS18B20_ERROR error = ds18b20_read_temp(ds18b20_info, &reading);
+
+        // Print results in a separate loop, after all have been read
+        ESP_LOGI(TAG, "Temperature readings (degrees C): %.1f sample %d", reading, ++sample_count);
+        if (error != DS18B20_OK) {
+            ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
+        }
+
+        // // set temperature attribute
+        // attribute_t *local_temp_attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
+        // esp_matter_attr_val_t temp_val = esp_matter_invalid(NULL);
+        // attribute::get_val(local_temp_attribute, &temp_val);
+        // temp_val.val.i16 = reading * 100;
+        // err = attribute::set_val(local_temp_attribute, &temp_val);
+        // if (err != ESP_OK) {
+        //     ESP_LOGE(TAG, "Failed to update feature map: %d", err);
+        // }
+
+        xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);
+    }
+
+    vTaskDelete(NULL);
+}
+
 extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
@@ -152,61 +214,9 @@ extern "C" void app_main()
     // Stable readings require a brief period before communication
     vTaskDelay(2000.0 / portTICK_PERIOD_MS);
 
-    // Create a 1-Wire bus, using the RMT timeslot driver
-    OneWireBus * owb;
-    owb_rmt_driver_info rmt_driver_info;
-    owb = owb_rmt_initialize(&rmt_driver_info, GPIO_NUM_4);
-    owb_use_crc(owb, true);  // enable CRC check for ROM code
-
-    OneWireBus_ROMCode device_rom_code;
-    OneWireBus_SearchState search_state = {0};
-    bool found = false;
-    owb_search_first(owb, &search_state, &found);
-    if (!found) {
-        ESP_LOGE(TAG, "No temperature sensor found");
-    } else {
-        char rom_code_s[17];
-        owb_string_from_rom_code(search_state.rom_code, rom_code_s, sizeof(rom_code_s));
-        device_rom_code = search_state.rom_code;
-        ESP_LOGI(TAG, "Found temperature sensor: %s", rom_code_s);
-    }
-
-    DS18B20_Info* ds18b20_info = ds18b20_malloc();
-    ds18b20_init_solo(ds18b20_info, owb);
-    ds18b20_use_crc(ds18b20_info, true);
-    ds18b20_set_resolution(ds18b20_info, DS18B20_RESOLUTION);
-
-
-    int sample_count = 0;
-    TickType_t last_wake_time = xTaskGetTickCount();
-
-    while (1) {
-        ds18b20_convert_all(owb);
-
-        ds18b20_wait_for_conversion(ds18b20_info);
-
-        // Read the results immediately after conversion otherwise it may fail
-        // (using printf before reading may take too long)
-        float reading;
-        DS18B20_ERROR error = ds18b20_read_temp(ds18b20_info, &reading);
-
-        // Print results in a separate loop, after all have been read
-        ESP_LOGI(TAG, "Temperature readings (degrees C): %.1f sample %d", reading, ++sample_count);
-        if (error != DS18B20_OK) {
-            ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
-        }
-
-        // set temperature attribute
-        attribute_t *local_temp_attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
-        esp_matter_attr_val_t temp_val = esp_matter_invalid(NULL);
-        attribute::get_val(local_temp_attribute, &temp_val);
-        temp_val.val.i16 = reading * 100;
-        err = attribute::set_val(local_temp_attribute, &temp_val);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to update feature map: %d", err);
-        }
-
-        xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);
+    BaseType_t status = xTaskCreate(take_temperature_reading, "take_temperature_reading", 4096, NULL, configMAX_PRIORITIES-2, NULL);
+    if (status == pdFAIL) {
+        ESP_LOGE(TAG, "Failed to create take_temperature_reading task");
     }
 
     // attribute_t *attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::FeatureMap::Id);

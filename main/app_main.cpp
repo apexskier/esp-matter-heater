@@ -19,11 +19,13 @@
 
 static const char *TAG = "app_main";
 static uint16_t thermostat_endpoint_id = 0;
+static uint32_t thermostat_cluster_id = 0;
 static uint32_t system_mode_attribute_id = 0;
 static uint32_t occupied_heating_setpoint_id = 0;
+static uint32_t local_temp_attribute_id = 0;
 
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
-#define SAMPLE_PERIOD        (1000)   // milliseconds
+#define SAMPLE_PERIOD        (3000)   // milliseconds
 
 typedef enum {
     SYSTEM_MODE_OFF = 0,
@@ -114,6 +116,11 @@ static esp_err_t app_attribute_update_cb(
 
 void take_temperature_reading( void *pvParameters )
 {
+    esp_err_t err = ESP_OK;
+
+    // Stable readings require a brief period before communication
+    vTaskDelay(2000.0 / portTICK_PERIOD_MS);
+
     // Create a 1-Wire bus, using the RMT timeslot driver
     OneWireBus * owb;
     owb_rmt_driver_info rmt_driver_info;
@@ -141,7 +148,6 @@ void take_temperature_reading( void *pvParameters )
     int sample_count = 0;
     TickType_t last_wake_time = xTaskGetTickCount();
 
-
     while (true) {
         ds18b20_convert_all(owb);
 
@@ -158,15 +164,12 @@ void take_temperature_reading( void *pvParameters )
             ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
         }
 
-        // // set temperature attribute
-        // attribute_t *local_temp_attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
-        // esp_matter_attr_val_t temp_val = esp_matter_invalid(NULL);
-        // attribute::get_val(local_temp_attribute, &temp_val);
-        // temp_val.val.i16 = reading * 100;
-        // err = attribute::set_val(local_temp_attribute, &temp_val);
-        // if (err != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to update feature map: %d", err);
-        // }
+        // set temperature attribute
+        esp_matter_attr_val_t temp_val = esp_matter_int16(reading * 100);
+        err = attribute::update(thermostat_endpoint_id, thermostat_cluster_id, local_temp_attribute_id, &temp_val);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to temperature attribute: %d", err);
+        }
 
         xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);
     }
@@ -202,6 +205,8 @@ extern "C" void app_main()
 
     esp_matter::cluster_t *thermostat_cluster = cluster::get(thermostat_endpoint, chip::app::Clusters::Thermostat::Id);
 
+    thermostat_cluster_id = cluster::get_id(thermostat_cluster);
+
     thermostat_endpoint_id = endpoint::get_id(thermostat_endpoint);
     ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);
 
@@ -210,9 +215,7 @@ extern "C" void app_main()
     occupied_heating_setpoint_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id));
     ESP_LOGI(TAG, "OccupiedHeatingSetpoint attribute id %ld", occupied_heating_setpoint_id);
 
-
-    // Stable readings require a brief period before communication
-    vTaskDelay(2000.0 / portTICK_PERIOD_MS);
+    local_temp_attribute_id = attribute::get_id(attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id));
 
     BaseType_t status = xTaskCreate(take_temperature_reading, "take_temperature_reading", 4096, NULL, configMAX_PRIORITIES-2, NULL);
     if (status == pdFAIL) {

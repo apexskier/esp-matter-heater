@@ -183,8 +183,6 @@ extern "C" void app_main()
     while (1) {
         ds18b20_convert_all(owb);
 
-        // In this application all devices use the same resolution,
-        // so use the first device to determine the delay
         ds18b20_wait_for_conversion(ds18b20_info);
 
         // Read the results immediately after conversion otherwise it may fail
@@ -196,6 +194,16 @@ extern "C" void app_main()
         ESP_LOGI(TAG, "Temperature readings (degrees C): %.1f sample %d", reading, ++sample_count);
         if (error != DS18B20_OK) {
             ESP_LOGE(TAG, "Temperature reading failed with error: %d", error);
+        }
+
+        // set temperature attribute
+        attribute_t *local_temp_attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
+        esp_matter_attr_val_t temp_val = esp_matter_invalid(NULL);
+        attribute::get_val(local_temp_attribute, &temp_val);
+        temp_val.val.i16 = reading * 100;
+        err = attribute::set_val(local_temp_attribute, &temp_val);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update feature map: %d", err);
         }
 
         xTaskDelayUntil(&last_wake_time, SAMPLE_PERIOD / portTICK_PERIOD_MS);

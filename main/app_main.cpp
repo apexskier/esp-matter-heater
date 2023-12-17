@@ -16,7 +16,13 @@
 static const char *TAG = "app_main";
 static uint16_t thermostat_endpoint_id = 0;
 static uint32_t system_mode_attribute_id = 0;
-static uint32_t max_heat_setpoint_limit_id = 0;
+static uint32_t occupied_heating_setpoint_id = 0;
+
+typedef enum {
+    SYSTEM_MODE_OFF = 0,
+    SYSTEM_MODE_COOL = 3,
+    SYSTEM_MODE_HEAT = 4,
+} system_mode_t;
 
 using namespace esp_matter;
 using namespace esp_matter::attribute;
@@ -73,13 +79,27 @@ static esp_err_t app_identification_cb(identification::callback_type_t type, uin
 // This callback is called for every attribute update. The callback implementation shall
 // handle the desired attributes and return an appropriate error code. If the attribute
 // is not of your interest, please do not return an error code and strictly return ESP_OK.
-static esp_err_t app_attribute_update_cb(callback_type_t type, uint16_t endpoint_id, uint32_t cluster_id,
-                                         uint32_t attribute_id, esp_matter_attr_val_t *val, void *priv_data)
-{
+static esp_err_t app_attribute_update_cb(
+    callback_type_t type,
+    uint16_t endpoint_id,
+    uint32_t cluster_id,
+    uint32_t attribute_id,
+    esp_matter_attr_val_t *val,
+    void *priv_data
+) {
+        ESP_LOGI(TAG, "Attribute update callback: type: %d, endpoint: %u, cluster: %lu, attribute: %lu", type, endpoint_id,
+                cluster_id, attribute_id);
     if (type == PRE_UPDATE) {
-        /* Handle the attribute updates here. */
-        ESP_LOGI(TAG, "Attribute update callback: endpoint: %u, cluster: %lu, attribute: %lu", endpoint_id,
-                 cluster_id, attribute_id);
+        ESP_LOGI(TAG, "value type: %u", val->type);
+        if (occupied_heating_setpoint_id && attribute_id == occupied_heating_setpoint_id) {
+            assert(val->type == ESP_MATTER_VAL_TYPE_INT16);
+            int16_t temp = val->val.i16; // this is 0.01 degrees C
+            ESP_LOGI(TAG, "Occupied heating setpoint update to %d", temp);
+        } else if (system_mode_attribute_id && attribute_id == system_mode_attribute_id) {
+            assert(val->type == ESP_MATTER_VAL_TYPE_ENUM8);
+            uint8_t mode = val->val.u8;
+            ESP_LOGI(TAG, "System mode update to %d", mode);
+        }
     }
 
     return ESP_OK;
@@ -103,7 +123,7 @@ extern "C" void app_main()
     thermostat::config_t thermostat_config;
     thermostat_config.thermostat.local_temperature = 2500;
     thermostat_config.thermostat.control_sequence_of_operation = 2; // heating only
-    thermostat_config.thermostat.system_mode       = 0;    // OFF state
+    thermostat_config.thermostat.system_mode = SYSTEM_MODE_OFF;
     endpoint_t *thermostat_endpoint = thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, NULL);
 
     /* These node and endpoint handles can be used to create/add other endpoints and clusters. */
@@ -118,8 +138,21 @@ extern "C" void app_main()
 
     system_mode_attribute_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::SystemMode::Id));
 
-    max_heat_setpoint_limit_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::MaxHeatSetpointLimit::Id));
-    ESP_LOGI(TAG, "MaxHeatSetpointLimit attribute id %ld", max_heat_setpoint_limit_id);
+    occupied_heating_setpoint_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id));
+    ESP_LOGI(TAG, "OccupiedHeatingSetpoint attribute id %ld", occupied_heating_setpoint_id);
+
+    // attribute_t *attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::FeatureMap::Id);
+    // esp_matter_attr_val_t val = esp_matter_invalid(NULL);
+    // attribute::get_val(attribute, &val);
+    // ESP_LOGI(TAG, "existing feature map is %lu", val.val.u32);
+    // val.val.u32 = static_cast<uint32_t>(chip::app::Clusters::Thermostat::Feature::kCooling) &
+    //     static_cast<uint32_t>(chip::app::Clusters::Thermostat::Feature::kHeating);// &
+    //     // static_cast<uint32_t>(chip::app::Clusters::Thermostat::Feature::kCooling) &
+    //     // static_cast<uint32_t>(chip::app::Clusters::Thermostat::Feature::kOccupancy);
+    // err = attribute::set_val(attribute, &val);
+    // if (err != ESP_OK) {
+    //     ESP_LOGE(TAG, "Failed to update feature map: %d", err);
+    // }
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
     /* Set OpenThread platform config */

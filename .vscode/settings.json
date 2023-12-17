@@ -1,3 +1,14 @@
 {
-    "idf.adapterTargetName": "esp32c3"
+    "idf.adapterTargetName": "esp32c3",
+    "idf.openOcdConfigs": [
+        "board/esp32c3-ftdi.cfg"
+    ],
+    "cmake.configureOnOpen": true,
+    "files.associations": {
+        "__config": "cpp",
+        "algorithm": "cpp",
+        "execution": "cpp",
+        "memory": "cpp",
+        "numeric": "cpp"
+    }
 }

@@ -6,6 +6,10 @@
 #include <esp_matter.h>
 #include <esp_matter_console.h>
 
+#include "owb.h"
+#include "owb_rmt.h"
+#include "ds18b20.h"
+
 #include <app_priv.h>
 #include <app_reset.h>
 #include <static-supported-temperature-levels.h>
@@ -140,6 +144,34 @@ extern "C" void app_main()
 
     occupied_heating_setpoint_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id));
     ESP_LOGI(TAG, "OccupiedHeatingSetpoint attribute id %ld", occupied_heating_setpoint_id);
+
+
+    // Stable readings require a brief period before communication
+    vTaskDelay(2000.0 / portTICK_PERIOD_MS);
+
+    // Create a 1-Wire bus, using the RMT timeslot driver
+    OneWireBus * owb;
+    owb_rmt_driver_info rmt_driver_info;
+    owb = owb_rmt_initialize(&rmt_driver_info, GPIO_NUM_4);
+    owb_use_crc(owb, true);  // enable CRC check for ROM code
+
+    // Find all connected devices
+    ESP_LOGI(TAG, "Find devices:");
+    OneWireBus_ROMCode device_rom_codes[1] = {0};
+    int num_devices = 0;
+    OneWireBus_SearchState search_state = {0};
+    bool found = false;
+    owb_search_first(owb, &search_state, &found);
+    while (found)
+    {
+        char rom_code_s[17];
+        owb_string_from_rom_code(search_state.rom_code, rom_code_s, sizeof(rom_code_s));
+        ESP_LOGI(TAG, "  %d : %s", num_devices, rom_code_s);
+        device_rom_codes[num_devices] = search_state.rom_code;
+        ++num_devices;
+        owb_search_next(owb, &search_state, &found);
+    }
+    ESP_LOGI(TAG, "Found %d device%s", num_devices, num_devices == 1 ? "" : "s");
 
     // attribute_t *attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::FeatureMap::Id);
     // esp_matter_attr_val_t val = esp_matter_invalid(NULL);

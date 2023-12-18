@@ -215,31 +215,28 @@ void update_heater_state( void *pvParameters )
 
         ESP_LOGI(TAG, "Occupied heating setpoint is %d, local temp %d, system mode %d", setpoint_val.val.i16, local_temp_val.val.i16, system_mode_val.val.i8);
         esp_matter_attr_val_t state_val;
-        bool is_null = false; // TODO check if local temp is null
-        if (is_null) {
-            ESP_LOGW(TAG, "local temp is null");
-            gpio_set_level(GPIO_NUM_2, 0);
-            state_val = esp_matter_enum8(static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kOff));
+        // TODO check if local temp is null
+        if (local_temp_val.val.i16 + 1000 < setpoint_val.val.i16) {
+            gpio_set_level(GPIO_NUM_2, 1);
+            gpio_set_level(GPIO_NUM_3, 1);
+            state_val = esp_matter_bitmap16(0b001001);
+        } else if (local_temp_val.val.i16 < setpoint_val.val.i16) {
+            gpio_set_level(GPIO_NUM_2, 1);
+            gpio_set_level(GPIO_NUM_3, 0);
+            state_val = esp_matter_bitmap16(0b000001);
         } else {
-            // turn on relay if temp is below, turn off if temp is above
-            if (local_temp_val.val.i16 < setpoint_val.val.i16) {
-                gpio_set_level(GPIO_NUM_2, 1);
-            state_val = esp_matter_enum8(static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kHeat));
-                // TODO: heat stage 2 - two relays
-            } else {
-                gpio_set_level(GPIO_NUM_2, 0);
-                state_val = esp_matter_enum8(static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kHeat));
-            }
+            gpio_set_level(GPIO_NUM_2, 0);
+            gpio_set_level(GPIO_NUM_3, 0);
+            state_val = esp_matter_bitmap16(0);
         }
 
         // not supported:
-        // - chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id
         // - chip::app::Clusters::Thermostat::Attributes::ThermostatRunningMode::Id,
-
+        // this is also not supported by esp-matter, I think, but it _should_ work
         matter_err = attribute::update(
             thermostat_endpoint_id,
             thermostat_cluster_id,
-            chip::app::Clusters::Thermostat::Attributes::SystemMode::Id,
+            chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
             &state_val
         );
         if (matter_err != ESP_OK) {
@@ -270,7 +267,7 @@ extern "C" void app_main()
 
     thermostat::config_t thermostat_config;
     thermostat_config.thermostat.local_temperature = 2500;
-    thermostat_config.thermostat.control_sequence_of_operation = 2; // heating only
+    thermostat_config.thermostat.control_sequence_of_operation = static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatControlSequence::kHeatingOnly);
     thermostat_config.thermostat.system_mode = SYSTEM_MODE_OFF;
     endpoint_t *thermostat_endpoint = thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, NULL);
 

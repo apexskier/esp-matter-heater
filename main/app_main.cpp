@@ -266,7 +266,6 @@ extern "C" void app_main()
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
 
     thermostat::config_t thermostat_config;
-    thermostat_config.thermostat.local_temperature = 2500;
     thermostat_config.thermostat.control_sequence_of_operation = static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatControlSequence::kHeatingOnly);
     thermostat_config.thermostat.system_mode = SYSTEM_MODE_OFF;
     endpoint_t *thermostat_endpoint = thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, NULL);
@@ -306,7 +305,7 @@ extern "C" void app_main()
         &val
     );
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update ControlSequenceOfOperation: %d", err);
+        ESP_LOGE(TAG, "Failed to set ControlSequenceOfOperation: %d", err);
     }
 
     val = esp_matter_enum8(static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kOff));
@@ -315,7 +314,17 @@ extern "C" void app_main()
         &val
     );
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to update ThermostatSystemMode: %d", err);
+        ESP_LOGE(TAG, "Failed to set ThermostatSystemMode: %d", err);
+    }
+
+    // this appears to be the real value in apple home, but apple doesn't seem to use it
+    val = esp_matter_int16(800);
+    err = attribute::set_val(
+        attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::MinHeatSetpointLimit::Id),
+        &val
+    );
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
     }
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD

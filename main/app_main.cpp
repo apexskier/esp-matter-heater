@@ -26,6 +26,7 @@ static uint32_t local_temp_attribute_id = 0;
 
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
 #define SAMPLE_PERIOD        (3000)   // milliseconds
+#define UPDATE_PERIOD        (10000)   // milliseconds
 
 typedef enum {
     SYSTEM_MODE_OFF = 0,
@@ -101,9 +102,9 @@ static esp_err_t app_attribute_update_cb(
     if (type == PRE_UPDATE) {
         ESP_LOGI(TAG, "value type: %u", val->type);
         if (occupied_heating_setpoint_id && attribute_id == occupied_heating_setpoint_id) {
-            assert(val->type == ESP_MATTER_VAL_TYPE_INT16);
-            int16_t temp = val->val.i16; // this is 0.01 degrees C
-            ESP_LOGI(TAG, "Occupied heating setpoint update to %d", temp);
+            // assert(val->type == ESP_MATTER_VAL_TYPE_INT16);
+            // setpoint_value = val->val.i16; // this is 0.01 degrees C
+            // ESP_LOGI(TAG, "Occupied heating setpoint update to %d", setpoint_value);
         } else if (system_mode_attribute_id && attribute_id == system_mode_attribute_id) {
             assert(val->type == ESP_MATTER_VAL_TYPE_ENUM8);
             uint8_t mode = val->val.u8;
@@ -174,6 +175,72 @@ void take_temperature_reading( void *pvParameters )
     vTaskDelete(NULL);
 }
 
+void update_heater_state( void *pvParameters )
+{
+    esp_err_t matter_err = ESP_OK;
+    TickType_t last_wake_time = xTaskGetTickCount();
+
+    node_t *node = node::get();
+    endpoint_t *endpoint = endpoint::get(node, thermostat_endpoint_id);
+    esp_matter_attr_val_t setpoint_val = esp_matter_invalid(NULL);
+    esp_matter_attr_val_t local_temp_val = esp_matter_invalid(NULL);
+    cluster_t *cluster = cluster::get(endpoint, chip::app::Clusters::Thermostat::Id);
+    attribute_t *occupied_setpoint_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id);
+    attribute_t *local_temp_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
+    // TODO
+    // attribute_t *thermostat_running_mode_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::ThermostatRunningMode::Id);
+
+
+    while (true) {
+        matter_err = attribute::get_val(occupied_setpoint_attribute, &setpoint_val);
+        if (matter_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to get setpoint val: %d", matter_err);
+        }
+        assert(setpoint_val.type == ESP_MATTER_VAL_TYPE_INT16);
+
+        matter_err = attribute::get_val(local_temp_attribute, &local_temp_val);
+        if (matter_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to get local temp val: %d", matter_err);
+        }
+        ESP_LOGI(TAG, "local temp type: %d", local_temp_val.type);
+        assert(local_temp_val.type == ESP_MATTER_VAL_TYPE_NULLABLE_INT16);
+
+        ESP_LOGI(TAG, "Occupied heating setpoint is %d, local temp id %d", setpoint_val.val.i16, local_temp_val.val.i16);
+        esp_matter_attr_val_t state_val;
+        bool is_null = false; // TODO check if local temp is null
+        if (is_null) {
+            ESP_LOGW(TAG, "local temp is null");
+            gpio_set_level(GPIO_NUM_2, 0);
+            state_val = esp_matter_bitmap16(0b000000); // off
+        } else {
+            // turn on relay if temp is below, turn off if temp is above
+            if (local_temp_val.val.i16 < setpoint_val.val.i16) {
+                gpio_set_level(GPIO_NUM_2, 1);
+                state_val = esp_matter_bitmap16(0b000001); // heating
+                // TODO: heat stage 2 - two relays
+            } else {
+                gpio_set_level(GPIO_NUM_2, 0);
+                state_val = esp_matter_bitmap16(0b000000); // off
+            }
+        }
+
+        matter_err = attribute::update(
+            thermostat_endpoint_id,
+            thermostat_cluster_id,
+            chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
+            &state_val
+        );
+        if (matter_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update running state: %d", matter_err);
+        }
+
+        xTaskDelayUntil(&last_wake_time, UPDATE_PERIOD / portTICK_PERIOD_MS);
+    }
+
+    vTaskDelete(NULL);
+}
+
+
 extern "C" void app_main()
 {
     esp_err_t err = ESP_OK;
@@ -209,14 +276,26 @@ extern "C" void app_main()
 
     system_mode_attribute_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::SystemMode::Id));
 
-    occupied_heating_setpoint_id = attribute::get_id(esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id));
+    esp_matter::attribute_t *occupied_heating_setpoint_attribute = esp_matter::attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id);
+    occupied_heating_setpoint_id = attribute::get_id(occupied_heating_setpoint_attribute);
     ESP_LOGI(TAG, "OccupiedHeatingSetpoint attribute id %ld", occupied_heating_setpoint_id);
+
+    esp_matter_attr_val_t setpoint_v = esp_matter_int16(2500);
+    err = attribute::get_val(occupied_heating_setpoint_attribute, &setpoint_v);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set initial setpoint: %d", err);
+    }
 
     local_temp_attribute_id = attribute::get_id(attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id));
 
     BaseType_t status = xTaskCreate(take_temperature_reading, "take_temperature_reading", 4096, NULL, configMAX_PRIORITIES-2, NULL);
     if (status == pdFAIL) {
         ESP_LOGE(TAG, "Failed to create take_temperature_reading task");
+    }
+
+    status = xTaskCreate(update_heater_state, "update_heater_state", 4096, NULL, configMAX_PRIORITIES-2, NULL);
+    if (status == pdFAIL) {
+        ESP_LOGE(TAG, "Failed to create update_heater_state task");
     }
 
     // attribute_t *attribute = attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::FeatureMap::Id);

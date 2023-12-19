@@ -26,7 +26,7 @@ const unsigned long windowSize = 10000; // milliseconds
 int debounce = 100;
 float Input, Output, Setpoint = 0;
 // totally untuned
-float Kp = 2, Ki = 5, Kd = 1;
+float Kp = 4, Ki = 8, Kd = 2;
 
 QuickPID myPID(
     &Input,
@@ -338,7 +338,7 @@ extern "C" void app_main()
         &val
     );
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
+        ESP_LOGE(TAG, "Failed to get initial OccupiedHeatingSetpoint: %d", err);
     }
     Setpoint = float(val.val.i16) / 100.0;
 
@@ -347,7 +347,7 @@ extern "C" void app_main()
         &val
     );
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
+        ESP_LOGE(TAG, "Failed to get initial LocalTemperature: %d", err);
     }
     Input = float(val.val.i16) / 100.0;
 

@@ -19,7 +19,6 @@
 
 static const char *TAG = "app_main";
 static uint16_t thermostat_endpoint_id = 0;
-static uint32_t thermostat_cluster_id = 0;
 
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
 #define SAMPLE_PERIOD        (3000)   // milliseconds
@@ -162,7 +161,7 @@ void take_temperature_reading( void *pvParameters )
             esp_matter_attr_val_t temp_val = esp_matter_int16(reading * 100);
             matter_err = attribute::update(
                 thermostat_endpoint_id,
-                thermostat_cluster_id,
+                chip::app::Clusters::Thermostat::Id,
                 chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id,
                 &temp_val
             );
@@ -235,7 +234,7 @@ void update_heater_state( void *pvParameters )
         // this is also not supported by esp-matter, I think, but it _should_ work
         matter_err = attribute::update(
             thermostat_endpoint_id,
-            thermostat_cluster_id,
+            chip::app::Clusters::Thermostat::Id,
             chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
             &state_val
         );
@@ -261,6 +260,14 @@ extern "C" void app_main()
     app_driver_handle_t reset_handle = app_driver_button_init();
     app_reset_button_register(reset_handle);
 
+    // TODO: I'd really like to set the LED to green/yellow/orange/red depending on the status
+    // of the heater. Unfortunately the built-in esp-matter LED driver is V1, which uses the
+    // legacy RMT driver and the OWB driver I'm using to read the temperature uses the new RMT driver.
+    // I get runtime errors when they're used together.
+    // > driver_ng is not allowed to be used with the legacy driver
+    // I can't pull in v2 of the LED driver since I get IDF Component conflicts.
+    // I don't understand RMT enough yet to port myself, so no LED for now
+
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
     node_t *node = node::create(&node_config, app_attribute_update_cb, app_identification_cb);
@@ -275,10 +282,6 @@ extern "C" void app_main()
         ESP_LOGE(TAG, "Matter node creation failed");
     }
 
-    esp_matter::cluster_t *thermostat_cluster = cluster::get(thermostat_endpoint, chip::app::Clusters::Thermostat::Id);
-
-    thermostat_cluster_id = cluster::get_id(thermostat_cluster);
-
     thermostat_endpoint_id = endpoint::get_id(thermostat_endpoint);
     ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);
 
@@ -289,6 +292,8 @@ extern "C" void app_main()
     if (xTaskCreate(update_heater_state, "update_heater_state", 4096, NULL, configMAX_PRIORITIES-2, NULL) == pdFAIL) {
         ESP_LOGE(TAG, "Failed to create update_heater_state task");
     }
+
+    esp_matter::cluster_t *thermostat_cluster = cluster::get(thermostat_endpoint, chip::app::Clusters::Thermostat::Id);
 
     esp_matter_attr_val_t val = esp_matter_enum8(1); // heating only
     err = attribute::set_val(

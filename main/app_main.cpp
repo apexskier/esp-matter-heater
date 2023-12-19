@@ -22,9 +22,9 @@ static const char *TAG = "app_main";
 static uint16_t thermostat_endpoint_id = 0;
 
 // PID settings
-const unsigned long windowSize = 30000; // milliseconds
+const unsigned long windowSize = 10000; // milliseconds
 int debounce = 100;
-float Input, Output, Setpoint = 25;
+float Input, Output, Setpoint = 0;
 // totally untuned
 float Kp = 2, Ki = 5, Kd = 1;
 
@@ -44,6 +44,7 @@ QuickPID myPID(
 #define DS18B20_RESOLUTION   (DS18B20_RESOLUTION_12_BIT)
 #define SAMPLE_PERIOD        (3000)   // milliseconds
 #define UPDATE_PERIOD        (10000)   // milliseconds
+#define GPIO_RELAY_1         GPIO_NUM_18
 
 typedef enum {
     SYSTEM_MODE_OFF = 0,
@@ -126,8 +127,7 @@ static esp_err_t app_attribute_update_cb(
             ESP_LOGI(TAG, "System mode update to %d", mode);
             if (mode == 0) {
                 // all off
-                gpio_set_level(GPIO_NUM_2, 0);
-                gpio_set_level(GPIO_NUM_3, 0);
+                gpio_set_level(GPIO_RELAY_1, 0);
             }
         }
     }
@@ -200,64 +200,44 @@ void take_temperature_reading( void *pvParameters )
 void update_heater_state( void *pvParameters )
 {
     esp_err_t matter_err = ESP_OK;
-    TickType_t last_wake_time = xTaskGetTickCount();
 
     node_t *node = node::get();
     endpoint_t *endpoint = endpoint::get(node, thermostat_endpoint_id);
     cluster_t *cluster = cluster::get(endpoint, chip::app::Clusters::Thermostat::Id);
-    esp_matter_attr_val_t setpoint_val = esp_matter_invalid(NULL);
-    attribute_t *occupied_setpoint_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id);
-    esp_matter_attr_val_t local_temp_val = esp_matter_invalid(NULL);
-    attribute_t *local_temp_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id);
     esp_matter_attr_val_t system_mode_val = esp_matter_invalid(NULL);
     attribute_t *system_mode_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::SystemMode::Id);
 
     while (true) {
-        // matter_err = attribute::get_val(occupied_setpoint_attribute, &setpoint_val);
-        // if (matter_err != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to get setpoint val: %d", matter_err);
-        // }
-        // assert(setpoint_val.type == ESP_MATTER_VAL_TYPE_INT16);
-
-        // matter_err = attribute::get_val(local_temp_attribute, &local_temp_val);
-        // if (matter_err != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to get local temp val: %d", matter_err);
-        // }
-        // assert(local_temp_val.type == ESP_MATTER_VAL_TYPE_NULLABLE_INT16);
-
         matter_err = attribute::get_val(system_mode_attribute, &system_mode_val);
         if (matter_err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to get system mode: %d", matter_err);
         }
         assert(system_mode_val.type == ESP_MATTER_VAL_TYPE_ENUM8);
         if (system_mode_val.val.i8 == SYSTEM_MODE_OFF) {
-            gpio_set_level(GPIO_NUM_2, 0);
-            gpio_set_level(GPIO_NUM_3, 0);
-            xTaskDelayUntil(&last_wake_time, UPDATE_PERIOD / portTICK_PERIOD_MS);
+            gpio_set_level(GPIO_RELAY_1, 0);
+            vTaskDelay(UPDATE_PERIOD / portTICK_PERIOD_MS);
             continue;
         }
 
         if (myPID.Compute()) {
             if (Output) {
                 ESP_LOGI(TAG, "turning on for %fms", Output);
-                if (!gpio_get_level(GPIO_NUM_2)) {
-                    // turn on for computed window
-                    gpio_set_level(GPIO_NUM_2, 1);
-                }
+                // turn on for computed window
+                gpio_set_level(GPIO_RELAY_1, 1);
 
                 vTaskDelay((Output + debounce) / portTICK_PERIOD_MS);
             }
 
             if (windowSize - Output) {
                 ESP_LOGI(TAG, "turning off for %fms", windowSize - Output);
-                if (gpio_get_level(GPIO_NUM_2)) {
-                    // turn on for computed window
-                    gpio_set_level(GPIO_NUM_2, 0);
-                }
+                // turn on for computed window
+                gpio_set_level(GPIO_RELAY_1, 0);
 
                 // 100 is debounce
                 vTaskDelay((windowSize - Output + debounce) / portTICK_PERIOD_MS);
             }
+        } else {
+            vTaskDelay(UPDATE_PERIOD / portTICK_PERIOD_MS);
         }
 
         // this not supported by esp-matter, but it _should_ work
@@ -286,10 +266,8 @@ extern "C" void app_main()
     app_driver_handle_t reset_handle = app_driver_button_init();
     app_reset_button_register(reset_handle);
 
-    /* Initialize PID */
-    myPID.SetOutputLimits(0, windowSize);
-    myPID.SetSampleTimeUs(windowSize * 1000);
-    myPID.SetMode(myPID.Control::automatic);
+    gpio_reset_pin(GPIO_RELAY_1);
+    gpio_set_direction(GPIO_RELAY_1, GPIO_MODE_OUTPUT);
 
     // TODO: I'd really like to set the LED to green/yellow/orange/red depending on the status
     // of the heater. Unfortunately the built-in esp-matter LED driver is V1, which uses the
@@ -315,14 +293,6 @@ extern "C" void app_main()
 
     thermostat_endpoint_id = endpoint::get_id(thermostat_endpoint);
     ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);
-
-    if (xTaskCreate(take_temperature_reading, "take_temperature_reading", 4096, NULL, configMAX_PRIORITIES, NULL) == pdFAIL) {
-        ESP_LOGE(TAG, "Failed to create take_temperature_reading task");
-    }
-
-    if (xTaskCreate(update_heater_state, "update_heater_state", 4096, NULL, configMAX_PRIORITIES, NULL) == pdFAIL) {
-        ESP_LOGE(TAG, "Failed to create update_heater_state task");
-    }
 
     esp_matter::cluster_t *thermostat_cluster = cluster::get(thermostat_endpoint, chip::app::Clusters::Thermostat::Id);
 
@@ -361,6 +331,37 @@ extern "C" void app_main()
     );
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
+    }
+
+    err = attribute::get_val(
+        attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id),
+        &val
+    );
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
+    }
+    Setpoint = float(val.val.i16) / 100.0;
+
+    err = attribute::get_val(
+        attribute::get(thermostat_cluster, chip::app::Clusters::Thermostat::Attributes::LocalTemperature::Id),
+        &val
+    );
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set MinHeatSetpointLimit: %d", err);
+    }
+    Input = float(val.val.i16) / 100.0;
+
+    /* Initialize PID */
+    myPID.SetOutputLimits(0, windowSize);
+    myPID.SetSampleTimeUs(windowSize * 1000);
+    myPID.SetMode(myPID.Control::automatic);
+
+    if (xTaskCreate(take_temperature_reading, "take_temperature_reading", 4096, NULL, configMAX_PRIORITIES, NULL) == pdFAIL) {
+        ESP_LOGE(TAG, "Failed to create take_temperature_reading task");
+    }
+
+    if (xTaskCreate(update_heater_state, "update_heater_state", 4096, NULL, configMAX_PRIORITIES, NULL) == pdFAIL) {
+        ESP_LOGE(TAG, "Failed to create update_heater_state task");
     }
 
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD

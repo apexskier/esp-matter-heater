@@ -4,6 +4,6 @@ Based initially on the [ESP matter refridgerator example](https://github.com/esp
 
 This is used to control a simple electric radiant heater I have by directly switching an AC relay.
 
-Built using an ESP32-C3-DevKitM-1 board, a DS18B20 temperature sensor, and TODO relay.
+Built using an ESP32-C3-DevKitM-1 board, a DS18B20 temperature sensor, and a SSR-40DA 40A 250V solid state relay.
 
 See the [docs](https://docs.espressif.com/projects/esp-matter/en/latest/esp32c3/developing.html) for more information about building and flashing the firmware.

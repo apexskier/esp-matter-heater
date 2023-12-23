@@ -13,7 +13,6 @@
 
 #include <app_priv.h>
 #include <app_reset.h>
-#include <static-supported-temperature-levels.h>
 #if CHIP_DEVICE_CONFIG_ENABLE_THREAD
 #include <platform/ESP32/OpenthreadLauncher.h>
 #endif
@@ -56,7 +55,6 @@ using namespace esp_matter;
 using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
 
-static chip::app::Clusters::TemperatureControl::AppSupportedTemperatureLevelsDelegate sAppSupportedTemperatureLevelsDelegate;
 static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg)
 {
     switch (event->Type) {
@@ -115,7 +113,6 @@ static esp_err_t app_attribute_update_cb(
     void *priv_data
 )
 {
-    ESP_LOGI(TAG, "Attribute update callback: type: %d, endpoint: %u, cluster: %lu, attribute: %lu", type, endpoint_id, cluster_id, attribute_id);
     if (type == PRE_UPDATE) {
         if (attribute_id == chip::app::Clusters::Thermostat::Attributes::OccupiedHeatingSetpoint::Id) {
             // value is 0.01 degrees C
@@ -257,6 +254,10 @@ void update_heater_state( void *pvParameters )
 
 extern "C" void app_main()
 {
+    esp_log_level_set("*", ESP_LOG_WARN);
+    esp_log_level_set("esp_matter_attribute", ESP_LOG_INFO);
+    esp_log_level_set(TAG, ESP_LOG_INFO);
+
     esp_err_t err = ESP_OK;
 
     /* Initialize the ESP NVS layer */
@@ -268,14 +269,6 @@ extern "C" void app_main()
 
     gpio_reset_pin(GPIO_RELAY_1);
     gpio_set_direction(GPIO_RELAY_1, GPIO_MODE_OUTPUT);
-
-    // TODO: I'd really like to set the LED to green/yellow/orange/red depending on the status
-    // of the heater. Unfortunately the built-in esp-matter LED driver is V1, which uses the
-    // legacy RMT driver and the OWB driver I'm using to read the temperature uses the new RMT driver.
-    // I get runtime errors when they're used together.
-    // > driver_ng is not allowed to be used with the legacy driver
-    // I can't pull in v2 of the LED driver since I get IDF Component conflicts.
-    // I don't understand RMT enough yet to port myself, so no LED for now
 
     /* Create a Matter node and add the mandatory Root Node device type on endpoint 0 */
     node::config_t node_config;
@@ -379,7 +372,6 @@ extern "C" void app_main()
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Matter start failed: %d", err);
     }
-    chip::app::Clusters::TemperatureControl::SetInstance(&sAppSupportedTemperatureLevelsDelegate);
 
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();

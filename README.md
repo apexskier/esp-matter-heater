@@ -1,6 +1,6 @@
 # Matter Heater
 
-Based initially on the [ESP matter refridgerator example](https://github.com/espressif/esp-matter/tree/96dc30b06e6330f84716f1954d51dd966486b071/examples/refrigerator).
+Based initially on the [ESP matter refrigerator example](https://github.com/espressif/esp-matter/tree/96dc30b06e6330f84716f1954d51dd966486b071/examples/refrigerator).
 
 This is used to control a simple electric radiant heater I have by directly switching an AC relay.
 

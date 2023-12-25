@@ -1,4 +1,4 @@
-$fn=100;
+$fn=60;
 w = 63.5;
 h = 30;
 ww = 1.4;
@@ -6,7 +6,7 @@ ww = 1.4;
 relayW = 46;
 espW = 25.5;
 thermW = 22.5;
-thermPinD = 3.4;
+thermPinD = 3;
 relayPinD = 4.5;
 thermPinSpace = 14.5;
 
@@ -22,9 +22,9 @@ difference() {
         }
 
         translate([w/2, relayW+espW+((thermW-14)/2), 0]) {
-            cylinder(h=h, d=thermPinD);
+            cylinder(h=h/4, d=thermPinD);
             translate([0, thermPinSpace, 0]) {
-                cylinder(h=h, d=thermPinD);
+                cylinder(h=h/4, d=thermPinD);
             }
         }
 
@@ -96,19 +96,6 @@ translate([w+10, 0, 0]) {
                 difference() {
                     offset(ww) circle(d=relayPinD);
                     circle(d=relayPinD);
-                }
-            }
-        }
-
-        translate([w/2, relayW+espW+((thermW-14)/2), 0]) {
-            difference() {
-                offset(ww) circle(d=thermPinD);
-                circle(d=thermPinD);
-            }
-            translate([0, thermPinSpace, 0]) {
-                difference() {
-                    offset(ww) circle(d=thermPinD);
-                    circle(d=thermPinD);
                 }
             }
         }

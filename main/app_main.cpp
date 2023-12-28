@@ -45,12 +45,6 @@ QuickPID myPID(
 #define UPDATE_PERIOD        (10000)   // milliseconds
 #define GPIO_RELAY_1         GPIO_NUM_18
 
-typedef enum {
-    SYSTEM_MODE_OFF = 0,
-    SYSTEM_MODE_COOL = 3,
-    SYSTEM_MODE_HEAT = 4,
-} system_mode_t;
-
 using namespace esp_matter;
 using namespace esp_matter::attribute;
 using namespace esp_matter::endpoint;
@@ -125,6 +119,15 @@ static esp_err_t app_attribute_update_cb(
             if (mode == 0) {
                 // all off
                 gpio_set_level(GPIO_RELAY_1, 0);
+                esp_matter_attr_val_t state_val = esp_matter_bitmap16(0b000000);
+                if (attribute::update(
+                    thermostat_endpoint_id,
+                    chip::app::Clusters::Thermostat::Id,
+                    chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
+                    &state_val
+                ) != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to update running state");
+                }
             }
         }
     }
@@ -203,6 +206,7 @@ void update_heater_state( void *pvParameters )
     cluster_t *cluster = cluster::get(endpoint, chip::app::Clusters::Thermostat::Id);
     esp_matter_attr_val_t system_mode_val = esp_matter_invalid(NULL);
     attribute_t *system_mode_attribute = attribute::get(cluster, chip::app::Clusters::Thermostat::Attributes::SystemMode::Id);
+    esp_matter_attr_val_t state_val = esp_matter_invalid(NULL);
 
     while (true) {
         matter_err = attribute::get_val(system_mode_attribute, &system_mode_val);
@@ -210,8 +214,18 @@ void update_heater_state( void *pvParameters )
             ESP_LOGE(TAG, "Failed to get system mode: %d", matter_err);
         }
         assert(system_mode_val.type == ESP_MATTER_VAL_TYPE_ENUM8);
-        if (system_mode_val.val.i8 == SYSTEM_MODE_OFF) {
+        if (system_mode_val.val.i8 == static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kOff)) {
             gpio_set_level(GPIO_RELAY_1, 0);
+            state_val = esp_matter_bitmap16(0b000000);
+            matter_err = attribute::update(
+                thermostat_endpoint_id,
+                chip::app::Clusters::Thermostat::Id,
+                chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
+                &state_val
+            );
+            if (matter_err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to update running state: %d", matter_err);
+            }
             vTaskDelay(UPDATE_PERIOD / portTICK_PERIOD_MS);
             continue;
         }
@@ -221,14 +235,16 @@ void update_heater_state( void *pvParameters )
                 ESP_LOGI(TAG, "turning on for %fms", Output);
                 // turn on for computed window
                 gpio_set_level(GPIO_RELAY_1, 1);
+                state_val = esp_matter_bitmap16(0b000001);
 
                 vTaskDelay((Output + debounce) / portTICK_PERIOD_MS);
             }
 
             if (windowSize - Output) {
                 ESP_LOGI(TAG, "turning off for %fms", windowSize - Output);
-                // turn on for computed window
+                // turn off for computed window
                 gpio_set_level(GPIO_RELAY_1, 0);
+                state_val = esp_matter_bitmap16(0b000000);
 
                 // 100 is debounce
                 vTaskDelay((windowSize - Output + debounce) / portTICK_PERIOD_MS);
@@ -237,16 +253,15 @@ void update_heater_state( void *pvParameters )
             vTaskDelay(UPDATE_PERIOD / portTICK_PERIOD_MS);
         }
 
-        // this not supported by esp-matter, but it _should_ work
-        // matter_err = attribute::update(
-        //     thermostat_endpoint_id,
-        //     chip::app::Clusters::Thermostat::Id,
-        //     chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
-        //     &state_val
-        // );
-        // if (matter_err != ESP_OK) {
-        //     ESP_LOGE(TAG, "Failed to update running state: %d", matter_err);
-        // }
+        matter_err = attribute::update(
+            thermostat_endpoint_id,
+            chip::app::Clusters::Thermostat::Id,
+            chip::app::Clusters::Thermostat::Attributes::ThermostatRunningState::Id,
+            &state_val
+        );
+        if (matter_err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to update running state: %d", matter_err);
+        }
     }
 
     vTaskDelete(NULL);
@@ -276,7 +291,7 @@ extern "C" void app_main()
 
     thermostat::config_t thermostat_config;
     thermostat_config.thermostat.control_sequence_of_operation = static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatControlSequence::kHeatingOnly);
-    thermostat_config.thermostat.system_mode = SYSTEM_MODE_OFF;
+    thermostat_config.thermostat.system_mode = static_cast<uint8_t>(chip::app::Clusters::Thermostat::ThermostatSystemMode::kOff);
     endpoint_t *thermostat_endpoint = thermostat::create(node, &thermostat_config, ENDPOINT_FLAG_NONE, NULL);
 
     /* These node and endpoint handles can be used to create/add other endpoints and clusters. */
@@ -288,6 +303,8 @@ extern "C" void app_main()
     ESP_LOGI(TAG, "Thermostat created with endpoint_id %d", thermostat_endpoint_id);
 
     esp_matter::cluster_t *thermostat_cluster = cluster::get(thermostat_endpoint, chip::app::Clusters::Thermostat::Id);
+
+    esp_matter::cluster::thermostat::attribute::create_thermostat_running_state(thermostat_cluster, 0);
 
     esp_matter_attr_val_t val = esp_matter_enum8(1); // heating only
     err = attribute::set_val(
